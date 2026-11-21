@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    "group:all"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "ARGs after a renovate comment in the Containerfile, with the commit of the tag in a following _COMMIT ARG",
+      "managerFilePatterns": [
+        "/^Containerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\nARG \\w+=(?<currentValue>\\S+)(?:\\nARG \\w+_COMMIT=(?<currentDigest>[0-9a-f]{40}))?"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Lint tool images run in the workflows",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.yml$/"
+      ],
+      "matchStrings": [
+        "(?<depName>(?:docker|ghcr)\\.io/[^:\\s\"]+):(?<currentValue>v?\\d[^\\s\"]*)"
+      ],
+      "datasourceTemplate": "docker"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Fedora releases come from endoflife.date, the image tags also have prereleases",
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "registry.fedoraproject.org/fedora"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "The amifuse fork pins follow the tests/requirements.txt of ptable, cfd and fat95",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "enabled": false
+    }
+  ],
+  "schedule": [
+    "after 4am and before 8am"
+  ],
+  "timezone": "UTC"
+}

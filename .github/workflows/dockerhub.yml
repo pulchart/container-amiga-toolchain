@@ -1,0 +1,63 @@
+name: Copy to Docker Hub
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  copy:
+    if: github.triggering_actor == github.repository_owner && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    environment: dockerhub
+    steps:
+      - name: Copy the release tags from GHCR to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ vars.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GHCR_TOKEN"
+          skopeo login docker.io -u "$DOCKERHUB_USERNAME" --password-stdin <<<"$DOCKERHUB_TOKEN"
+          images=(amiga-toolchain)
+          tags='^(latest|[0-9].*)$'
+          digest() { skopeo inspect --format '{{.Digest}}' "docker://$1" 2>/dev/null || true; }
+          declare -A before
+          keys=()
+          for image in "${images[@]}"; do
+            list=$(skopeo list-tags "docker://ghcr.io/pulchart/$image" | jq -r '.Tags[]')
+            release=$(grep -E "$tags" <<<"$list" | sort) || { echo "$image: no release tags on GHCR" >&2; exit 1; }
+            for tag in $release; do
+              keys+=("$image:$tag")
+              before[$image:$tag]=$(digest "docker.io/pulchart/$image:$tag")
+            done
+          done
+          {
+            echo "ghcr.io:"
+            echo "  images-by-tag-regex:"
+            for image in "${images[@]}"; do echo "    pulchart/$image: $tags"; done
+          } >sync.yml
+          skopeo sync --all --preserve-digests --src yaml --dest docker sync.yml docker.io/pulchart
+          # skopeo sync skips a repository it cannot list and still exits 0, so compare every tag
+          failed=0
+          {
+            echo "| image | tag | digest | Docker Hub |"
+            echo "|---|---|---|---|"
+            for key in "${keys[@]}"; do
+              src=$(digest "ghcr.io/pulchart/$key")
+              dst=$(digest "docker.io/pulchart/$key")
+              if [ -z "$src" ] || [ "$src" != "$dst" ]; then state="**differs**"; failed=1
+              elif [ "$dst" = "${before[$key]}" ]; then state=unchanged
+              else state=copied; fi
+              echo "| \`${key%%:*}\` | \`${key#*:}\` | \`${src:7:12}\` | $state |"
+            done
+          } >table.md
+          tee -a "$GITHUB_STEP_SUMMARY" <table.md
+          skopeo logout --all
+          exit "$failed"
