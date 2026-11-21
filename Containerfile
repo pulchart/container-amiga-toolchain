@@ -65,7 +65,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # gcc and python3-devel build the amifuse forks, which have no wheel
 # hadolint ignore=DL3041
 RUN dnf install -y "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
-    && dnf install -y make git lha glibc-gconv-extra python3 python3-devel gcc diffutils findutils ruff yamllint uv \
+    && dnf install -y make git git-lfs lha glibc-gconv-extra python3 python3-devel gcc diffutils findutils ruff yamllint uv \
     && dnf clean all
 
 COPY --from=build /opt/ /opt/
@@ -105,6 +105,7 @@ RUN printf '%s\n' '#include <proto/exec.h>' '#include <proto/dos.h>' \
            || { echo "$f is no AmigaOS executable" >&2; exit 1; }; \
        done \
     && lha -cq t.lha t a && lha -lq t.lha | grep -q ' a$' \
+    && git lfs version \
     && python3 -c 'import amitools.vamos, machine68k' \
     && ruff --version && yamllint --version \
     && printf '%s\n' '# t' '' 'text' '' '```mermaid' 'graph LR' 'A --> B' '```' >t.md \
