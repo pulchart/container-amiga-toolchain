@@ -1,0 +1,183 @@
+name: Images
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# cancel older builds of a pull request, let master runs wait
+concurrency:
+  group: images-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+
+env:
+  REGISTRY: ghcr.io/pulchart
+  IMAGE: amiga-toolchain
+  HADOLINT: docker.io/hadolint/hadolint:v2.15.1
+  ACTIONLINT: docker.io/rhysd/actionlint:1.7.12
+  # a pull request from this repository, which may push and attest
+  OWN_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+  # a manual run on master, which publishes its own build
+  RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' }}
+  # tag of the tested image in the -pr package
+  TAG: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.number) || format('run-{0}', github.run_id) }}
+  # dorny/paths-filter: the files whose change makes a pull request build the image
+  IMAGE_FILES: |
+    images:
+      - Containerfile
+      - vendor/**
+      - config/**
+      - tools/**
+      - requirements.txt
+      - .github/scripts/versions.sh
+      - .github/workflows/images.yml
+
+jobs:
+  # the required check
+  images:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          lfs: true
+      - name: Check whether the pull request changes the image
+        if: github.event_name == 'pull_request'
+        id: changes
+        uses: dorny/paths-filter@v4
+        with:
+          filters: ${{ env.IMAGE_FILES }}
+      - name: Report a pull request without image changes
+        if: github.event_name == 'pull_request' && steps.changes.outputs.images != 'true'
+        run: echo "No change to the image files, no image built" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: hadolint
+        run: podman run --rm -i "$HADOLINT" hadolint - <Containerfile
+      - name: actionlint
+        run: podman run --rm -v "$PWD:/repo:ro" -w /repo "$ACTIONLINT" -color
+      - name: Build and test amiga-toolchain
+        if: github.event_name != 'pull_request' || steps.changes.outputs.images == 'true'
+        id: build
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # docker format: buildah honours SHELL, and so pipefail, only there
+          podman build --format docker --target toolchain -t "$IMAGE" .
+          podman build --format docker --target test .
+          versions=$(podman run --rm -v "$PWD/.github/scripts:/scripts:ro" "$IMAGE" bash /scripts/versions.sh)
+          eval "$versions"
+          for v in fedora vasm vlink vbcc ndk ruff yamllint; do
+            [ -n "${!v:-}" ] || { echo "versions.sh found no $v version" >&2; exit 1; }
+          done
+          date=$(date -u +%Y%m%d)
+          podman build --format docker --target toolchain --label "fedora.version=$fedora" --label "vasm.version=$vasm" \
+            --label "vlink.version=$vlink" --label "vbcc.version=$vbcc" --label "ndk.version=$ndk" \
+            --label "ruff.version=$ruff" --label "yamllint.version=$yamllint" \
+            --label "build.date=$date" --label "org.opencontainers.image.revision=$REVISION" \
+            --label "org.opencontainers.image.version=$date" -t "$IMAGE" .
+          echo "Fedora $fedora, vasm $vasm, vlink $vlink, vbcc $vbcc, NDK $ndk, ruff $ruff, yamllint $yamllint, the test stage passed" |
+            tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Push amiga-toolchain
+        if: steps.build.outcome == 'success' && (env.OWN_PR == 'true' || env.RELEASE == 'true')
+        id: push
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          podman login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          podman push --digestfile digest "$IMAGE" "$REGISTRY/$IMAGE-pr:$TAG"
+          podman logout ghcr.io
+          echo "digest=$(cat digest)" >>"$GITHUB_OUTPUT"
+      - name: Attest amiga-toolchain
+        if: steps.push.outcome == 'success'
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/pulchart/amiga-toolchain
+          subject-digest: ${{ steps.push.outputs.digest }}
+
+  # a manual run on master: the image it tested gets the release tags
+  release:
+    needs: images
+    if: always() && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Copy the tested image to the release tags
+        if: needs.images.result == 'success'
+        id: copy
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          table=$(.github/scripts/publish.sh "$TAG" "$GITHUB_SHA")
+          skopeo logout ghcr.io
+          printf 'Published the image of run %s\n\n%s\n' "$GITHUB_RUN_ID" "$table" >>"$GITHUB_STEP_SUMMARY"
+      - name: Keep the newest 10 tagged versions
+        if: steps.copy.outcome == 'success'
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: amiga-toolchain
+          keep-n-tagged: 10
+          delete-untagged: true
+      - name: Delete the run image
+        if: always() && steps.copy.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/delete-pr-images.sh "$TAG" >>"$GITHUB_STEP_SUMMARY"
+
+  closed:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check whether the pull request changed the image
+        if: github.event.pull_request.merged && github.event.pull_request.base.ref == 'master'
+        id: changes
+        uses: dorny/paths-filter@v4
+        with:
+          filters: ${{ env.IMAGE_FILES }}
+      - name: Report a merge without image changes
+        if: steps.changes.outputs.images == 'false'
+        run: echo "No change to the image files, nothing published" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Copy the pull request image to the release tags
+        if: steps.changes.outputs.images == 'true'
+        id: copy
+        env:
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$TOKEN"
+          table=$(.github/scripts/publish.sh "$TAG" "$HEAD")
+          skopeo logout ghcr.io
+          printf 'Published the image tested in pull request #%s\n\n%s\n' "${TAG#pr-}" "$table" >>"$GITHUB_STEP_SUMMARY"
+          echo "copied=true" >>"$GITHUB_OUTPUT"
+      - name: Keep the newest 10 tagged versions
+        if: steps.copy.outputs.copied == 'true'
+        uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          packages: amiga-toolchain
+          keep-n-tagged: 10
+          delete-untagged: true
+      - name: Delete the pull request image
+        if: always() && steps.copy.outcome != 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: .github/scripts/delete-pr-images.sh "$TAG" >>"$GITHUB_STEP_SUMMARY"
