@@ -1,15 +1,15 @@
 # container-amiga-toolchain
 
-Container image that builds, lints and tests m68k AmigaOS software in CI and locally, such as ptable, cfd and fat95. It brings the assembler, linker, C compiler, NDK, test and lint tools and the AmigaGuide generator; the project brings its sources and Makefile.
+Image that builds, lints and tests m68k AmigaOS software such as ptable, cfd and fat95.
 
 ## Image
 
-On GHCR and Docker Hub, same tags and digests.
+`ghcr.io/pulchart/amiga-toolchain` and `docker.io/pulchart/amiga-toolchain` carry the same tags and digests.
 
-| image | tag | contents |
-|---|---|---|
-| `pulchart/amiga-toolchain` | `<build date>`, e.g. `20261121` | one build |
-| | `latest` | newest build |
+| tag | contents |
+|---|---|
+| `<build date>`, e.g. `20261121` | one build |
+| `latest` | newest build |
 
 | tool | path |
 |---|---|
@@ -40,11 +40,9 @@ On GHCR and Docker Hub, same tags and digests.
 | `NDK` | `/opt/NDK3.2` |
 | `PATH` | `/opt/vbcc/bin:/opt/vasm/bin:/opt/vlink/bin:/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin` |
 
-`/opt/vbcc/bin` holds no vasm or vlink, so `vc +aos68k` calls `vasmm68k_mot` and `vlink` from `/opt/vasm` and `/opt/vlink`. C sources take NDK headers with `-I"$NDK/Include_H"`, assembler sources with `-I"$NDK/Include_I"`. `python3` is the venv one, so test suites find their packages without setup.
+`/opt/vbcc/bin` has no vasm or vlink, so `vc +aos68k` takes them from `/opt/vasm` and `/opt/vlink`. C sources take NDK headers with `-I"$NDK/Include_H"`, assembler sources with `-I"$NDK/Include_I"`. `python3` is the venv one. gcc, make and git are there too.
 
-Fedora with gcc, make, git and lha (LHa for UNIX, creates archives) runs test suites and packaging. `uv pip install` adds packages to the venv.
-
-Pin CI to a dated tag. GHCR keeps the newest 10 versions, Docker Hub keeps every copied tag. The labels `vasm.version`, `vlink.version`, `vbcc.version`, `ndk.version`, `ruff.version`, `yamllint.version`, `fedora.version`, `build.date` and `org.opencontainers.image.revision` show what an image holds:
+The labels `vasm.version`, `vlink.version`, `vbcc.version`, `ndk.version`, `ruff.version`, `yamllint.version`, `fedora.version`, `build.date` and `org.opencontainers.image.revision` name the contents:
 
 ```sh
 podman image inspect ghcr.io/pulchart/amiga-toolchain:latest --format '{{json .Labels}}'
@@ -52,27 +50,23 @@ podman image inspect ghcr.io/pulchart/amiga-toolchain:latest --format '{{json .L
 
 ## Sources
 
-vasm, vlink and vbcc build from their unmodified source archives in `vendor/`, see [vendor/README.md](vendor/README.md) for versions, hashes and licences. The vbcc m68k-amigaos target and the NDK come from Aminet, pinned by SHA-256 in `VBCC_TARGET_SHA256` and `NDK_SHA256`. `config/aos68k` is the vbcc config for a Linux host, since the one in the target archive uses AmigaOS assigns. ruff, yamllint and uv come from Fedora, lha from RPM Fusion nonfree, the amifuse forks from PyPI with the versions pinned in `requirements.txt`, mermaid-ascii from its Go module at the commit of the tag in `MERMAID_ASCII_VERSION`.
+vasm, vlink and vbcc build from unmodified archives in `vendor/`, see [vendor/README.md](vendor/README.md). The vbcc m68k-amigaos target and the NDK come from Aminet, pinned by `VBCC_TARGET_SHA256` and `NDK_SHA256`. `config/aos68k` replaces the target's vbcc config, which uses AmigaOS assigns. ruff, yamllint and uv come from Fedora, lha from RPM Fusion nonfree, the amifuse forks from PyPI as pinned in `requirements.txt`, and mermaid-ascii from its Go module at the tag commit in `MERMAID_ASCII_COMMIT`.
 
-Renovate keeps `FEDORA_VERSION`, mermaid-ascii and the lint images current in one pull request, refreshed daily between 4 and 8 UTC.
+Renovate updates `FEDORA_VERSION`, mermaid-ascii and the lint images daily between 4 and 8 UTC.
 
 ## Use
 
-Locally, run make in the image with the checkout mounted at the same path:
-
 ```sh
-podman run --rm --security-opt label=disable -v "$PWD:$PWD" -w "$PWD" ghcr.io/pulchart/amiga-toolchain:20261121 make all test
+podman run --rm --security-opt label=disable -v "$PWD:$PWD" -w "$PWD" ghcr.io/pulchart/amiga-toolchain:latest make
 ```
 
-ptable's Makefile does this itself: outside the image `make` runs its goals in `TOOLCHAIN_IMAGE`, inside it runs them directly. Build output stays in the checkout, owned by the user.
-
-In GitHub Actions the job runs in the image. The checkout belongs to another user, so git needs `safe.directory`:
+ptable's Makefile runs its goals this way when called outside the image. In GitHub Actions the checkout belongs to another user, so git needs `safe.directory`:
 
 ```yaml
 jobs:
   build:
     runs-on: ubuntu-24.04
-    container: ghcr.io/pulchart/amiga-toolchain:20261121
+    container: ghcr.io/pulchart/amiga-toolchain:latest
     steps:
       - uses: actions/checkout@v7
       - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -86,6 +80,6 @@ podman build --format docker --target toolchain -t amiga-toolchain .
 podman build --format docker --target test .
 ```
 
-`--format docker` keeps `SHELL`, which sets pipefail for every `RUN`; the OCI format drops it. The test stage builds a C program against the NDK with `vc` and an assembler source with NDK includes and checks both are AmigaOS executables. It also creates an lha archive, imports amitools and machine68k, runs ruff and yamllint and converts a markdown file with a mermaid block through md2guide.
+`--format docker` keeps `SHELL` and with it pipefail. The test stage builds C and assembler against the NDK, creates an lha archive, imports the Python packages, runs ruff and yamllint and converts a mermaid block with md2guide.
 
-A pull request that changes the image builds and tests it. From a branch of this repository it also pushes the image to `amiga-toolchain-pr`, and merging copies that image to the release tags. A fork's pull request only builds; after its merge a manual run publishes. A manual run of `Images` on master builds and publishes again, for example on a new Fedora image. `Copy to Docker Hub` copies the release tags.
+A pull request from this repository pushes its tested image to `amiga-toolchain-pr`, and merging copies it to the release tags. A fork's pull request only builds. A manual `Images` run on master builds and publishes; `Copy to Docker Hub` copies the release tags.
