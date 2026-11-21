@@ -18,7 +18,7 @@ Image that builds, lints and tests m68k AmigaOS software such as ptable, cfd and
 | vbcc (`vc`, `vbccm68k`, `vprof`), m68k-amigaos target, `+aos68k` config | `/opt/vbcc` |
 | NDK 3.2 | `/opt/NDK3.2` |
 | amitools, machine68k (amifuse forks) | `/opt/venv` |
-| ruff, yamllint, uv, lha | `/usr/bin` |
+| ruff, yamllint, uv, lha, git-lfs | `/usr/bin` |
 | md2guide, mermaid-ascii | `/usr/local/bin` |
 
 ```
