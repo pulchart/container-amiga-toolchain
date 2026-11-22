@@ -17,8 +17,8 @@ Image that builds, lints and tests m68k AmigaOS software such as ptable, cfd and
 | vlink | `/opt/vlink/bin` |
 | vbcc (`vc`, `vbccm68k`, `vprof`), m68k-amigaos target, `+aos68k` config | `/opt/vbcc` |
 | NDK 3.2 | `/opt/NDK3.2` |
-| amitools, machine68k (amifuse forks) | `/opt/venv` |
-| ruff, yamllint, uv, lha, git-lfs | `/usr/bin` |
+| amitools, machine68k, amifuse, fusepy | `/opt/venv` |
+| ruff, yamllint, uv, lha, git-lfs, dosfstools, mtools, exfatprogs | `/usr/bin` |
 | md2guide, mermaid-ascii | `/usr/local/bin` |
 
 ```
@@ -50,7 +50,7 @@ podman image inspect ghcr.io/pulchart/amiga-toolchain:latest --format '{{json .L
 
 ## Sources
 
-vasm, vlink and vbcc build from unmodified archives in `vendor/`, see [vendor/README.md](vendor/README.md). The vbcc m68k-amigaos target and the NDK come from Aminet, pinned by `VBCC_TARGET_SHA256` and `NDK_SHA256`. `config/aos68k` replaces the target's vbcc config, which uses AmigaOS assigns. ruff, yamllint and uv come from Fedora, lha from RPM Fusion nonfree, the amifuse forks from PyPI as pinned in `requirements.txt`, and mermaid-ascii from its Go module at the tag commit in `MERMAID_ASCII_COMMIT`.
+vasm, vlink and vbcc build from unmodified archives in `vendor/`, see [vendor/README.md](vendor/README.md). The vbcc m68k-amigaos target and the NDK come from Aminet, pinned by `VBCC_TARGET_SHA256` and `NDK_SHA256`. `config/aos68k` replaces the target's vbcc config, which uses AmigaOS assigns. ruff, yamllint and uv come from Fedora, lha from RPM Fusion nonfree, amitools, machine68k, amifuse and fusepy from PyPI as pinned in `requirements.txt`, and mermaid-ascii from its Go module at the tag commit in `MERMAID_ASCII_COMMIT`.
 
 Renovate updates `FEDORA_VERSION`, mermaid-ascii and the lint images daily between 4 and 8 UTC.
 
@@ -80,6 +80,6 @@ podman build --format docker --target toolchain -t amiga-toolchain .
 podman build --format docker --target test .
 ```
 
-`--format docker` keeps `SHELL` and with it pipefail. The test stage builds C and assembler against the NDK, creates an lha archive, imports the Python packages, runs ruff and yamllint and converts a mermaid block with md2guide.
+`--format docker` keeps `SHELL` and with it pipefail. The test stage builds C and assembler against the NDK, creates an lha archive, imports the Python packages, checks dosfstools, mtools and exfatprogs, runs ruff and yamllint and converts a mermaid block with md2guide.
 
 A pull request from this repository pushes its tested image to `amiga-toolchain-pr`, and merging copies it to the release tags. A fork's pull request only builds. A manual `Images` run on master builds and publishes; `Copy to Docker Hub` copies the release tags.

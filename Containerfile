@@ -62,10 +62,12 @@ FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION} AS toolchain
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # ruff, yamllint and uv from Fedora, lha (LHa for UNIX, creates archives) from RPM Fusion nonfree, its iconv modules in glibc-gconv-extra;
-# gcc and python3-devel build the amifuse forks, which have no wheel
+# gcc and python3-devel build the Python packages that have no wheel; dosfstools, mtools and exfatprogs
+# make and read the FAT and exFAT images of fat95 test-amifuse, fuse-libs is the libfuse fusepy loads on import
 # hadolint ignore=DL3041
 RUN dnf install -y "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" \
     && dnf install -y make git git-lfs lha glibc-gconv-extra python3 python3-devel gcc diffutils findutils ruff yamllint uv \
+       dosfstools mtools exfatprogs fuse-libs \
     && dnf clean all
 
 COPY --from=build /opt/ /opt/
@@ -106,7 +108,8 @@ RUN printf '%s\n' '#include <proto/exec.h>' '#include <proto/dos.h>' \
        done \
     && lha -cq t.lha t a && lha -lq t.lha | grep -q ' a$' \
     && git lfs version \
-    && python3 -c 'import amitools.vamos, machine68k' \
+    && python3 -c 'import amitools.vamos, machine68k, amifuse, fuse' \
+    && mkfs.fat --help >/dev/null && mtools --version >/dev/null && command -v mkfs.exfat >/dev/null \
     && ruff --version && yamllint --version \
     && printf '%s\n' '# t' '' 'text' '' '```mermaid' 'graph LR' 'A --> B' '```' >t.md \
     && md2guide t.md t.guide --version 1.0 --date 21.11.2026 --title t --ver-title t \

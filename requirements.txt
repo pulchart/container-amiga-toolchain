@@ -1,4 +1,7 @@
 # Test dependencies of ptable, cfd and fat95, installed with uv into /opt/venv.
-# amifuse forks; upstream amitools and machine68k use the same import paths and conflict.
-amitools-amifuse==0.8.0.post8
-machine68k-amifuse==0.4.1.post1
+# amifuse runs the fat95 handler on disk images for its test-amifuse tier.
+amitools[vamos]==0.9.1
+machine68k==0.5.2
+greenlet==3.5.6
+amifuse==1.0.0
+fusepy==3.0.1
